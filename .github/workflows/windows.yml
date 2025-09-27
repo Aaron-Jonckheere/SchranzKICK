@@ -4,31 +4,42 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  build-windows:
     runs-on: windows-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Clone JUCE 7
         run: |
-          choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' --yes
-          choco install git --yes
+          git clone --depth 1 https://github.com/juce-framework/JUCE JUCE
+          dir JUCE
 
-      - name: Clone JUCE
-        run: |
-          git clone --branch 7.0.5 --depth 1 https://github.com/juce-framework/JUCE.git
-
-      - name: Configure CMake
-        run: |
-          cmake -S . -B build -DJUCE_DIR="${{ github.workspace }}\JUCE" -DCMAKE_BUILD_TYPE=Release
+      - name: Configure CMake (MSVC Release)
+        run: >
+          cmake -S . -B build
+          -G "Visual Studio 17 2022"
+          -DJUCE_DIR="${{ github.workspace }}\\JUCE\\cmake"
+          -DCMAKE_PREFIX_PATH="${{ github.workspace }}\\JUCE"
+          -DCMAKE_BUILD_TYPE=Release
 
       - name: Build VST3 Plugin
+        run: cmake --build build --config Release --parallel
+
+      - name: Locate VST3 artifact
+        shell: pwsh
         run: |
-          cmake --build build --config Release --parallel
+          $vst3 = Get-ChildItem -Recurse -Path build -Filter *.vst3 | Where-Object { $_.Name -eq 'SchranzKick.vst3' } | Select-Object -First 1
+          if (-not $vst3) {
+            Write-Host 'Available files:'
+            Get-ChildItem -Recurse -Path build -Filter *.vst3 | Format-Table FullName
+            Write-Error 'SchranzKick.vst3 not found'
+            exit 1
+          }
+          echo "VST3_PATH=$($vst3.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: SchranzKick_v0.1_Windows_VST3
-          path: build/**/SchranzKick.vst3
+          path: ${{ env.VST3_PATH }}
